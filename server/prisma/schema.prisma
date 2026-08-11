@@ -1,0 +1,218 @@
+// Prisma Schema — AI Developer Job Hunter
+// Phase 1 + Phase 2 + Phase 3
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ── Enums ────────────────────────────────────────────────────────────────
+
+enum ExperienceLevel {
+  BEGINNER
+  JUNIOR
+  MID_LEVEL
+  SENIOR
+  LEAD
+}
+
+enum Specialization {
+  FRONTEND
+  BACKEND
+  FULL_STACK
+  MOBILE
+  DEVOPS_CLOUD
+  SOFTWARE_ENGINEERING
+  OTHER
+}
+
+enum SkillCategory {
+  FRONTEND
+  BACKEND
+  MOBILE
+  DATABASE
+  CLOUD_DEVOPS
+  OTHER
+}
+
+enum SkillProficiency {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum JobType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  FREELANCE
+  INTERNSHIP
+  TEMPORARY
+}
+
+enum WorkPreference {
+  REMOTE
+  HYBRID
+  ON_SITE
+}
+
+enum SalaryPeriod {
+  HOURLY
+  MONTHLY
+  YEARLY
+}
+
+enum Availability {
+  IMMEDIATELY
+  WITHIN_2_WEEKS
+  WITHIN_1_MONTH
+  MORE_THAN_1_MONTH
+}
+
+// Phase 3 enums
+enum JobStatus {
+  ACTIVE
+  EXPIRED
+  REMOVED
+  ERROR
+}
+
+enum RemoteType {
+  REMOTE
+  HYBRID
+  ON_SITE
+  UNKNOWN
+}
+
+enum ApplicationMethod {
+  DIRECT
+  EXTERNAL
+  MANUAL
+  UNKNOWN
+}
+
+// ── Models ───────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  profile DeveloperProfile?
+
+  @@map("users")
+}
+
+model DeveloperProfile {
+  id                       String           @id @default(cuid())
+  userId                   String           @unique
+  professionalTitle        String?
+  bio                      String?
+  yearsOfExperience        Int?
+  experienceLevel          ExperienceLevel?
+  primarySpecialization    Specialization?
+  secondarySpecializations Specialization[]
+  location                 String?
+  country                  String?
+  timezone                 String?
+  remoteWorldwide          Boolean          @default(false)
+  preferredCountries       String[]
+  preferredCities          String[]
+  jobTypes                 JobType[]
+  workPreferences          WorkPreference[]
+  salaryMin                Int?
+  salaryMax                Int?
+  currency                 String?
+  salaryPeriod             SalaryPeriod?
+  availability             Availability?
+  portfolioUrl             String?
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skills ProfileSkill[]
+
+  @@map("developer_profiles")
+}
+
+model ProfileSkill {
+  id          String           @id @default(cuid())
+  profileId   String
+  name        String
+  category    SkillCategory?
+  proficiency SkillProficiency
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  profile DeveloperProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, name])
+  @@map("profile_skills")
+}
+
+// ── Phase 3: Job Discovery ────────────────────────────────────────────────
+
+model Job {
+  id                String            @id @default(cuid())
+  source            String
+  sourceJobId       String?
+  title             String
+  companyName       String
+  companyUrl        String?
+  description       String
+  location          String?
+  country           String?
+  remoteType        RemoteType        @default(UNKNOWN)
+  employmentType    String?
+  tags              String[]
+  salaryMin         Int?
+  salaryMax         Int?
+  salaryCurrency    String?
+  salaryPeriod      SalaryPeriod?
+  salaryRaw         String?
+  applicationUrl    String?
+  originalUrl       String
+  applicationMethod ApplicationMethod @default(EXTERNAL)
+  status            JobStatus         @default(ACTIVE)
+  postedAt          DateTime?
+  discoveredAt      DateTime          @default(now())
+  lastCheckedAt     DateTime          @default(now())
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@unique([source, sourceJobId])
+  @@index([status])
+  @@index([source])
+  @@index([remoteType])
+  @@index([postedAt])
+  @@index([companyName])
+  @@index([discoveredAt])
+  @@map("jobs")
+}
+
+model SourceHealth {
+  id            String   @id @default(cuid())
+  sourceName    String   @unique
+  status        String   @default("UNKNOWN")
+  lastRunAt     DateTime?
+  lastSuccessAt DateTime?
+  lastErrorAt   DateTime?
+  lastErrorMsg  String?
+  jobsFetched   Int      @default(0)
+  jobsNew       Int      @default(0)
+  jobsDuplicate Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("source_health")
+}
