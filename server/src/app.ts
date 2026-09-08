@@ -6,12 +6,15 @@ import cookieParser from 'cookie-parser';
 
 import { env } from './config/env';
 import logger from './lib/logger';
-import prisma from './lib/prisma';
+import { connectDB, disconnectDB } from './lib/mongoose';
 import { errorHandler } from './middleware/errorHandler';
 
 import healthRoutes from './routes/health.routes';
 import authRoutes from './routes/auth.routes';
 import profileRoutes from './routes/profile.routes';
+import jobRoutes from './jobs/routes/job.routes';
+import applicationRoutes from './applications/routes/application.routes';
+import { startRefreshScheduler } from './jobs/scheduler';
 
 const app = express();
 
@@ -29,8 +32,8 @@ app.use(
 );
 
 // ── Body parsing ───────────────────────────────────────────────────
-app.use(express.json({ limit: '10kb' }));
-app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // ── Cookie parsing ─────────────────────────────────────────────────
 app.use(cookieParser());
@@ -39,6 +42,8 @@ app.use(cookieParser());
 app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
+app.use('/api/jobs', jobRoutes);
+app.use('/api/applications', applicationRoutes);
 
 // ── 404 handler ────────────────────────────────────────────────────
 app.use((_req, res) => {
@@ -51,12 +56,14 @@ app.use(errorHandler);
 // ── Start server ───────────────────────────────────────────────────
 async function bootstrap() {
     try {
-        await prisma.$connect();
-        logger.info('Database connected successfully.');
+        await connectDB();
 
         app.listen(env.port, () => {
             logger.info(`Server running on http://localhost:${env.port} [${env.nodeEnv}]`);
         });
+
+        // Start the automatic job-refresh loop (respects provider rate limits).
+        startRefreshScheduler();
     } catch (error) {
         logger.error('Failed to start server:', error);
         process.exit(1);
@@ -66,13 +73,13 @@ async function bootstrap() {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
     logger.info('SIGTERM received. Shutting down gracefully...');
-    await prisma.$disconnect();
+    await disconnectDB();
     process.exit(0);
 });
 
 process.on('SIGINT', async () => {
     logger.info('SIGINT received. Shutting down gracefully...');
-    await prisma.$disconnect();
+    await disconnectDB();
     process.exit(0);
 });
 

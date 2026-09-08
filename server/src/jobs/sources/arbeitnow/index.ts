@@ -15,7 +15,7 @@ import {
     sanitizeHtml,
     isValidUrl,
 } from '../../normalizers';
-import { JobStatus } from '@prisma/client';
+import { JobStatus } from '../../../models/enums';
 import logger from '../../../lib/logger';
 
 const SOURCE_NAME = 'arbeitnow';

@@ -6,7 +6,8 @@ import { env } from '../config/env';
 /**
  * Centralized error handler.
  * - Known AppErrors → return their statusCode + message.
- * - Validation errors → 400 with user-friendly message.
+ * - MongoDB duplicate key (code 11000) → 409 Conflict.
+ * - MongoDB validation errors → 400.
  * - Everything else → 500, log internally, return a safe generic message.
  */
 export function errorHandler(
@@ -29,11 +30,32 @@ export function errorHandler(
         return;
     }
 
-    // Handle Prisma known request errors generically
-    if (err.name === 'PrismaClientKnownRequestError') {
+    // MongoDB duplicate key error (unique index violation)
+    if (
+        err.name === 'MongoServerError' &&
+        (err as unknown as { code?: number }).code === 11000
+    ) {
+        res.status(409).json({
+            success: false,
+            message: 'A record with that value already exists.',
+        });
+        return;
+    }
+
+    // Mongoose CastError — invalid ObjectId
+    if (err.name === 'CastError') {
         res.status(400).json({
             success: false,
-            message: 'A database error occurred. Please try again.',
+            message: 'Invalid ID format.',
+        });
+        return;
+    }
+
+    // Mongoose ValidationError
+    if (err.name === 'ValidationError') {
+        res.status(400).json({
+            success: false,
+            message: 'Validation failed. Please check your input.',
         });
         return;
     }

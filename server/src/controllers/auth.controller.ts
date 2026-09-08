@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { authService } from '../services/auth.service';
 import { AuthRequest } from '../types';
 import { env } from '../config/env';
-import prisma from '../lib/prisma';
+import { UserModel } from '../models';
 
 const COOKIE_OPTIONS = {
     httpOnly: true,
@@ -72,16 +72,9 @@ export const authController = {
         try {
             const userId = req.user!.userId;
 
-            const user = await prisma.user.findUnique({
-                where: { id: userId },
-                select: {
-                    id: true,
-                    firstName: true,
-                    lastName: true,
-                    email: true,
-                    createdAt: true,
-                },
-            });
+            const user = await UserModel.findById(userId).select(
+                'firstName lastName email createdAt',
+            );
 
             if (!user) {
                 res.clearCookie('token');
@@ -89,7 +82,18 @@ export const authController = {
                 return;
             }
 
-            res.status(200).json({ success: true, data: { user } });
+            res.status(200).json({
+                success: true,
+                data: {
+                    user: {
+                        id: user._id.toString(),
+                        firstName: user.firstName,
+                        lastName: user.lastName,
+                        email: user.email,
+                        createdAt: user.createdAt,
+                    },
+                },
+            });
         } catch (err) {
             next(err);
         }

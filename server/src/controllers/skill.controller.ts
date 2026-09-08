@@ -27,7 +27,7 @@ export const skillController = {
     async updateSkill(req: AuthRequest, res: Response, next: NextFunction) {
         try {
             const userId = req.user!.userId;
-            const skillId = req.params.id;
+            const skillId = String(req.params.id);
             const { name, proficiency, category } = req.body;
             const data = await skillService.updateSkill(userId, skillId, { name, proficiency, category });
             res.status(200).json({ success: true, message: 'Skill updated.', data });
@@ -39,7 +39,7 @@ export const skillController = {
     async deleteSkill(req: AuthRequest, res: Response, next: NextFunction) {
         try {
             const userId = req.user!.userId;
-            const skillId = req.params.id;
+            const skillId = String(req.params.id);
             const data = await skillService.deleteSkill(userId, skillId);
             res.status(200).json({ success: true, message: 'Skill removed.', data });
         } catch (err) {

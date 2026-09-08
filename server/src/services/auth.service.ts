@@ -1,5 +1,5 @@
 import * as argon2 from 'argon2';
-import prisma from '../lib/prisma';
+import { UserModel } from '../models';
 import { signToken } from '../utils/jwt';
 import { AppError } from '../utils/AppError';
 
@@ -15,12 +15,22 @@ interface LoginInput {
     password: string;
 }
 
+function safeUser(user: { _id: unknown; firstName: string; lastName: string; email: string; createdAt: Date }) {
+    return {
+        id: (user._id as { toString(): string }).toString(),
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        createdAt: user.createdAt,
+    };
+}
+
 export const authService = {
     async register(input: RegisterInput) {
         const { firstName, lastName, email, password } = input;
 
         // Check for existing account
-        const existing = await prisma.user.findUnique({ where: { email } });
+        const existing = await UserModel.findOne({ email: email.toLowerCase().trim() });
         if (existing) {
             throw new AppError('An account with this email already exists.', 409);
         }
@@ -30,25 +40,22 @@ export const authService = {
             type: argon2.argon2id,
         });
 
-        const user = await prisma.user.create({
-            data: { firstName, lastName, email, passwordHash },
-            select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                email: true,
-                createdAt: true,
-            },
+        const user = await UserModel.create({
+            firstName,
+            lastName,
+            email: email.toLowerCase().trim(),
+            passwordHash,
         });
 
-        const token = signToken({ userId: user.id, email: user.email });
-        return { user, token };
+        const token = signToken({ userId: user._id.toString(), email: user.email });
+        return { user: safeUser(user), token };
     },
 
     async login(input: LoginInput) {
         const { email, password } = input;
 
-        const user = await prisma.user.findUnique({ where: { email } });
+        // Fetch with passwordHash (excluded from default toJSON transform)
+        const user = await UserModel.findOne({ email: email.toLowerCase().trim() }).select('+passwordHash');
 
         // Use the same error message regardless of whether the email exists
         // to prevent user-enumeration attacks
@@ -61,15 +68,7 @@ export const authService = {
             throw new AppError('Invalid email or password.', 401);
         }
 
-        const safeUser = {
-            id: user.id,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            email: user.email,
-            createdAt: user.createdAt,
-        };
-
-        const token = signToken({ userId: user.id, email: user.email });
-        return { user: safeUser, token };
+        const token = signToken({ userId: user._id.toString(), email: user.email });
+        return { user: safeUser(user), token };
     },
 };

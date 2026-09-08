@@ -1,5 +1,5 @@
-import { Prisma } from '@prisma/client';
-import prisma from '../lib/prisma';
+import { UserModel } from '../models/User';
+import { DeveloperProfileModel, IDeveloperProfile } from '../models/DeveloperProfile';
 import { AppError } from '../utils/AppError';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -29,10 +29,6 @@ export interface UpdateDeveloperProfileInput {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-const PROFILE_INCLUDE = {
-    skills: { orderBy: { name: 'asc' as const } },
-} satisfies Prisma.DeveloperProfileInclude;
-
 /** Trim a string; empty-string becomes null so blank inputs clear the field. */
 function emptyToNull(value: string | null | undefined): string | null | undefined {
     if (value === undefined || value === null) return value;
@@ -44,8 +40,9 @@ function normalizeList(value: string[] | undefined): string[] | undefined {
     if (value === undefined) return undefined;
     return value.map((s) => s.trim()).filter((s) => s.length > 0);
 }
+
 /**
- * Profile completion percentage (0–100), derived from actual profile data.
+ * Profile completion percentage (0–100).
  * Weights are aligned to the Phase 2 feature set. Total possible = 100.
  */
 export function calculateCompletion(profile: {
@@ -98,97 +95,118 @@ export function calculateCompletion(profile: {
     return score; // max 100
 }
 
-function toApiProfile(profile: Prisma.DeveloperProfileGetPayload<{ include: typeof PROFILE_INCLUDE }>) {
-    const { skills, ...rest } = profile;
+/** Convert a Mongoose DeveloperProfile document to the API response shape. */
+function toApiProfile(profile: IDeveloperProfile) {
+    const obj = profile.toJSON();
     return {
-        ...rest,
-        skills: (skills ?? []).map(({ id, name, category, proficiency }) => ({ id, name, category, proficiency })),
-        completion: calculateCompletion(profile),
+        ...obj,
+        skills: (profile.skills ?? []).map((s) => ({
+            id: s._id.toString(),
+            name: s.name,
+            category: s.category ?? null,
+            proficiency: s.proficiency,
+        })),
+        completion: calculateCompletion({
+            ...obj,
+            skills: profile.skills,
+        }),
     };
 }
 
-function buildData(input: UpdateDeveloperProfileInput): Prisma.DeveloperProfileUncheckedUpdateInput {
-    const data: Prisma.DeveloperProfileUncheckedUpdateInput = {};
+/** Build a MongoDB $set object from the input, only including defined fields. */
+function buildUpdateFields(input: UpdateDeveloperProfileInput): Record<string, unknown> {
+    const data: Record<string, unknown> = {};
 
-    if (input.professionalTitle !== undefined) data.professionalTitle = emptyToNull(input.professionalTitle);
-    if (input.bio !== undefined) data.bio = emptyToNull(input.bio);
+    if (input.professionalTitle !== undefined) data.professionalTitle = emptyToNull(input.professionalTitle) ?? null;
+    if (input.bio !== undefined) data.bio = emptyToNull(input.bio) ?? null;
     if (input.yearsOfExperience !== undefined) data.yearsOfExperience = input.yearsOfExperience;
-    if (input.experienceLevel !== undefined) data.experienceLevel = input.experienceLevel as never;
-    if (input.primarySpecialization !== undefined) data.primarySpecialization = input.primarySpecialization as never;
-    if (input.secondarySpecializations !== undefined) {
-        data.secondarySpecializations = input.secondarySpecializations as never;
-    }
-    if (input.location !== undefined) data.location = emptyToNull(input.location);
-    if (input.country !== undefined) data.country = emptyToNull(input.country);
-    if (input.timezone !== undefined) data.timezone = emptyToNull(input.timezone);
+    if (input.experienceLevel !== undefined) data.experienceLevel = input.experienceLevel ?? null;
+    if (input.primarySpecialization !== undefined) data.primarySpecialization = input.primarySpecialization ?? null;
+    if (input.secondarySpecializations !== undefined)
+        data.secondarySpecializations = input.secondarySpecializations;
+    if (input.location !== undefined) data.location = emptyToNull(input.location) ?? null;
+    if (input.country !== undefined) data.country = emptyToNull(input.country) ?? null;
+    if (input.timezone !== undefined) data.timezone = emptyToNull(input.timezone) ?? null;
     if (input.remoteWorldwide !== undefined) data.remoteWorldwide = input.remoteWorldwide;
-    if (input.preferredCountries !== undefined) data.preferredCountries = normalizeList(input.preferredCountries) ?? [];
-    if (input.preferredCities !== undefined) data.preferredCities = normalizeList(input.preferredCities) ?? [];
-    if (input.jobTypes !== undefined) data.jobTypes = input.jobTypes as never;
-    if (input.workPreferences !== undefined) data.workPreferences = input.workPreferences as never;
+    if (input.preferredCountries !== undefined)
+        data.preferredCountries = normalizeList(input.preferredCountries) ?? [];
+    if (input.preferredCities !== undefined)
+        data.preferredCities = normalizeList(input.preferredCities) ?? [];
+    if (input.jobTypes !== undefined) data.jobTypes = input.jobTypes;
+    if (input.workPreferences !== undefined) data.workPreferences = input.workPreferences;
     if (input.salaryMin !== undefined) data.salaryMin = input.salaryMin;
     if (input.salaryMax !== undefined) data.salaryMax = input.salaryMax;
-    if (input.currency !== undefined) data.currency = emptyToNull(input.currency)?.toUpperCase();
-    if (input.salaryPeriod !== undefined) data.salaryPeriod = input.salaryPeriod as never;
-    if (input.availability !== undefined) data.availability = input.availability as never;
-    if (input.portfolioUrl !== undefined) data.portfolioUrl = emptyToNull(input.portfolioUrl);
+    if (input.currency !== undefined)
+        data.currency = emptyToNull(input.currency)?.toUpperCase() ?? null;
+    if (input.salaryPeriod !== undefined) data.salaryPeriod = input.salaryPeriod ?? null;
+    if (input.availability !== undefined) data.availability = input.availability ?? null;
+    if (input.portfolioUrl !== undefined) data.portfolioUrl = emptyToNull(input.portfolioUrl) ?? null;
 
     return data;
 }
+
 // ── Service ────────────────────────────────────────────────────────────────
 
 export const profileService = {
     /** Combined payload: user identity + developer profile (with skills + completion). */
     async getProfile(userId: string) {
-        const user = await prisma.user.findUnique({
-            where: { id: userId },
-            select: { id: true, firstName: true, lastName: true, email: true, createdAt: true },
-        });
+        const user = await UserModel.findById(userId).select(
+            'firstName lastName email createdAt',
+        );
 
-        if (!user) {
-            throw new AppError('User not found.', 404);
-        }
+        if (!user) throw new AppError('User not found.', 404);
 
-        const profile = await prisma.developerProfile.findUnique({
-            where: { userId },
-            include: PROFILE_INCLUDE,
-        });
+        const profile = await DeveloperProfileModel.findOne({ userId });
 
-        return { user, profile: profile ? toApiProfile(profile) : null };
+        return {
+            user: {
+                id: user._id.toString(),
+                firstName: user.firstName,
+                lastName: user.lastName,
+                email: user.email,
+                createdAt: user.createdAt,
+            },
+            profile: profile ? toApiProfile(profile) : null,
+        };
     },
 
     /** Create or fully update the authenticated user's developer profile. */
     async upsertProfile(userId: string, input: UpdateDeveloperProfileInput) {
-        const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
-        if (!user) {
-            throw new AppError('User not found.', 404);
-        }
+        const user = await UserModel.findById(userId).select('_id');
+        if (!user) throw new AppError('User not found.', 404);
 
-        const data = buildData(input);
-        const profile = await prisma.developerProfile.upsert({
-            where: { userId },
-            update: data,
-            create: { userId, ...data },
-            include: PROFILE_INCLUDE,
-        });
+        const updateFields = buildUpdateFields(input);
 
-        return toApiProfile(profile);
+        const profile = await DeveloperProfileModel.findOneAndUpdate(
+            { userId },
+            { $set: updateFields },
+            { new: true, upsert: true, setDefaultsOnInsert: true },
+        );
+
+        return toApiProfile(profile!);
     },
 
     /** Phase 1 compatibility: update first/last name on the User record. */
     async updateNames(userId: string, names: { firstName?: string; lastName?: string }) {
-        const user = await prisma.user.findUnique({ where: { id: userId } });
-        if (!user) {
-            throw new AppError('User not found.', 404);
-        }
+        const user = await UserModel.findById(userId);
+        if (!user) throw new AppError('User not found.', 404);
 
-        return prisma.user.update({
-            where: { id: userId },
-            data: {
-                ...(names.firstName !== undefined && { firstName: names.firstName }),
-                ...(names.lastName !== undefined && { lastName: names.lastName }),
-            },
-            select: { id: true, firstName: true, lastName: true, email: true, createdAt: true },
-        });
+        const updateData: Record<string, string> = {};
+        if (names.firstName !== undefined) updateData.firstName = names.firstName;
+        if (names.lastName !== undefined) updateData.lastName = names.lastName;
+
+        const updated = await UserModel.findByIdAndUpdate(
+            userId,
+            { $set: updateData },
+            { new: true, select: 'firstName lastName email createdAt' },
+        );
+
+        return {
+            id: updated!._id.toString(),
+            firstName: updated!.firstName,
+            lastName: updated!.lastName,
+            email: updated!.email,
+            createdAt: updated!.createdAt,
+        };
     },
 };

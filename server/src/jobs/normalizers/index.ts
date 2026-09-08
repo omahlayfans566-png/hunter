@@ -1,8 +1,8 @@
-import { RemoteType, ApplicationMethod, SalaryPeriod } from '@prisma/client';
+import { RemoteType, ApplicationMethod, SalaryPeriod } from '../../models/enums';
 
 // ── Remote type normalization ────────────────────────────────────────────
 
-const REMOTE_KEYWORDS = ['remote', 'anywhere', 'work from anywhere', 'fully remote', 'worldwide'];
+const REMOTE_KEYWORDS = ['remote', 'anywhere', 'work from anywhere', 'fully remote', 'worldwide', 'home based', 'home-based', 'distributed', '100% remote', 'work from home'];
 const HYBRID_KEYWORDS = ['hybrid'];
 const ON_SITE_KEYWORDS = ['on-site', 'onsite', 'in-office', 'in office', 'on site'];
 
@@ -47,9 +47,10 @@ export function determineApplicationMethod(
 
 // ── Country extraction ───────────────────────────────────────────────────
 
-const COUNTRY_PATTERNS: Record<string, string> = {
+const COUNTRY_PATTERNS: Record<string, string | null> = {
     'united states': 'United States',
-    ' us ': 'United States',
+    ' usa': 'United States',
+    'usa ': 'United States',
     ', us': 'United States',
     '(us)': 'United States',
     'united kingdom': 'United Kingdom',
@@ -63,7 +64,32 @@ const COUNTRY_PATTERNS: Record<string, string> = {
     australia: 'Australia',
     nigeria: 'Nigeria',
     netherlands: 'Netherlands',
+    ireland: 'Ireland',
+    india: 'India',
+    'south africa': 'South Africa',
+    'new zealand': 'New Zealand',
+    'united arab': 'United Arab Emirates',
+    uae: 'United Arab Emirates',
+    austria: 'Austria',
+    poland: 'Poland',
+    spain: 'Spain',
+    italy: 'Italy',
+    portugal: 'Portugal',
+    brazil: 'Brazil',
+    mexico: 'Mexico',
+    japan: 'Japan',
+    singapore: 'Singapore',
+    'usa / worldwide': 'United States',
+    europe: 'Europe',
+    'europe / remote': 'Europe',
+    emea: 'Europe',
+    'remote - emea': 'Europe',
     remote: null,
+    worldwide: null,
+    anywhere: null,
+    'global': null,
+    'flexible': null,
+    'earth': null,
 };
 
 export function extractCountry(location?: string | null): string | null {
@@ -73,6 +99,34 @@ export function extractCountry(location?: string | null): string | null {
         if (loc.includes(pattern)) return country;
     }
     return null;
+}
+
+// ── Canonicalization (used by duplicate detection) ─────────────────────────
+
+const TRACKING_PARAMS = [
+    'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+    'fbclid', 'gclid', 'ref', 'referrer', 'source', 'src',
+];
+
+export function normalizeCanonicalUrl(url: string): string {
+    try {
+        const u = new URL(url);
+        u.hash = '';
+        TRACKING_PARAMS.forEach((key) => u.searchParams.delete(key));
+        u.pathname = u.pathname.replace(/\/+$/, '') || '/';
+        return u.origin + u.pathname + u.search;
+    } catch {
+        return url.trim().toLowerCase();
+    }
+}
+
+export function normalizeTitle(title: string): string {
+    return title
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .replace(/[()\-_/.,]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 // ── Salary normalization ─────────────────────────────────────────────────

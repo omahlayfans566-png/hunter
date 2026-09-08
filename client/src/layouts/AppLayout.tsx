@@ -45,12 +45,10 @@ export default function AppLayout() {
 
                         {/* Desktop nav */}
                         <nav className="hidden md:flex items-center gap-1">
-                            <NavLink to="/dashboard" className={navLinkClass}>
-                                Dashboard
-                            </NavLink>
-                            <NavLink to="/profile" className={navLinkClass}>
-                                Profile
-                            </NavLink>
+                            <NavLink to="/dashboard" className={navLinkClass}>Dashboard</NavLink>
+                            <NavLink to="/jobs" className={navLinkClass}>Jobs</NavLink>
+                            <NavLink to="/applications" className={navLinkClass}>Applications</NavLink>
+                            <NavLink to="/profile" className={navLinkClass}>Profile</NavLink>
                         </nav>
 
                         {/* Right side */}
@@ -91,20 +89,10 @@ export default function AppLayout() {
                     {/* Mobile nav drawer */}
                     {menuOpen && (
                         <nav className="md:hidden py-3 border-t border-gray-800 flex flex-col gap-1">
-                            <NavLink
-                                to="/dashboard"
-                                className={navLinkClass}
-                                onClick={() => setMenuOpen(false)}
-                            >
-                                Dashboard
-                            </NavLink>
-                            <NavLink
-                                to="/profile"
-                                className={navLinkClass}
-                                onClick={() => setMenuOpen(false)}
-                            >
-                                Profile
-                            </NavLink>
+                            <NavLink to="/dashboard" className={navLinkClass} onClick={() => setMenuOpen(false)}>Dashboard</NavLink>
+                            <NavLink to="/jobs" className={navLinkClass} onClick={() => setMenuOpen(false)}>Jobs</NavLink>
+                            <NavLink to="/applications" className={navLinkClass} onClick={() => setMenuOpen(false)}>Applications</NavLink>
+                            <NavLink to="/profile" className={navLinkClass} onClick={() => setMenuOpen(false)}>Profile</NavLink>
                         </nav>
                     )}
                 </div>
@@ -116,7 +104,7 @@ export default function AppLayout() {
             </main>
 
             <footer className="border-t border-gray-800 px-6 py-4 text-center text-xs text-gray-700">
-                AI Developer Job Hunter — Phase 1
+                AI Developer Job Hunter — 9 sources · MongoDB Atlas
             </footer>
         </div>
     );

@@ -18,6 +18,9 @@ const pkgIndex = path.join(scratch, 'node_modules', 'embedded-postgres', 'dist',
         password: 'postgres',
         authMethod: 'password',
         persistent: true,
+        // Force UTF-8: Windows initdb defaults to WIN1252 which rejects
+        // emoji/non-Latin characters that real job listings contain.
+        initdbFlags: ['--encoding=UTF8', '--locale=C'],
         onLog: (m) => console.log('[pg] ' + m),
         onError: (m) => console.error('[pg-err] ' + m),
     });

@@ -200,3 +200,155 @@ export const AVAILABILITIES: Availability[] = [
 ];
 export const CURRENCIES = ['USD', 'GBP', 'EUR', 'NGN'] as const;
 export const SALARY_PERIODS: SalaryPeriod[] = ['HOURLY', 'MONTHLY', 'YEARLY'];
+
+// ── Phase 3: Job types ────────────────────────────────────────────────────
+
+export type JobStatus = 'ACTIVE' | 'EXPIRED' | 'REMOVED' | 'ERROR';
+export type RemoteType = 'REMOTE' | 'HYBRID' | 'ON_SITE' | 'UNKNOWN';
+export type ApplicationMethod = 'DIRECT' | 'EXTERNAL' | 'MANUAL' | 'UNKNOWN';
+
+export interface Job {
+    id: string;
+    source: string;
+    sources?: string[];
+    title: string;
+    companyName: string;
+    location: string | null;
+    country: string | null;
+    remoteType: RemoteType;
+    employmentType: string | null;
+    tags: string[];
+    salaryMin: number | null;
+    salaryMax: number | null;
+    salaryCurrency: string | null;
+    salaryPeriod: SalaryPeriod | null;
+    salaryRaw: string | null;
+    applicationUrl: string | null;
+    originalUrl: string;
+    applicationMethod: ApplicationMethod;
+    status: JobStatus;
+    verificationStatus?: VerificationStatus;
+    lastVerifiedAt?: string | null;
+    matchScore?: number | null;
+    postedAt: string | null;
+    discoveredAt: string;
+}
+
+export type VerificationStatus = 'ACTIVE' | 'EXPIRED' | 'CLOSED' | 'UNVERIFIED';
+
+export interface JobDetail extends Job {
+    description: string;
+    companyUrl: string | null;
+    sourceJobId: string | null;
+    lastCheckedAt: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface JobPagination {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrev: boolean;
+}
+
+export interface JobSearchResponse {
+    jobs: Job[];
+    pagination: JobPagination;
+}
+
+export interface JobStats {
+    total: number;
+    active: number;
+    remote: number;
+    today: number;
+}
+
+export interface SourceHealth {
+    id: string;
+    sourceName: string;
+    status: string;
+    lastRunAt: string | null;
+    lastSuccessAt: string | null;
+    lastErrorAt: string | null;
+    lastErrorMsg: string | null;
+    jobsFetched: number;
+    jobsNew: number;
+    jobsDuplicate: number;
+    jobsActive?: number;
+}
+
+export interface SourceStatus {
+    sourceName: string;
+    status: 'WORKING' | 'UNAVAILABLE' | 'CONFIG_REQUIRED' | 'UNKNOWN';
+    message: string;
+    requiresConfig: boolean;
+    configKeys?: string[];
+}
+
+export interface IngestionResult {
+    source: string;
+    fetched: number;
+    saved: number;
+    duplicates: number;
+    errors: number;
+    errorMessage?: string;
+    success: boolean;
+}
+
+export interface IngestionResponse {
+    results: IngestionResult[];
+    summary: { totalFetched: number; totalNew: number; totalDupes: number };
+}
+
+export const REMOTE_TYPE_LABELS: Record<RemoteType, string> = {
+    REMOTE: 'Remote',
+    HYBRID: 'Hybrid',
+    ON_SITE: 'On-site',
+    UNKNOWN: 'Unknown',
+};
+
+export const APPLICATION_METHOD_LABELS: Record<ApplicationMethod, string> = {
+    DIRECT: 'Direct',
+    EXTERNAL: 'External',
+    MANUAL: 'Manual',
+    UNKNOWN: 'Unknown',
+};
+
+// ── Saved Jobs ─────────────────────────────────────────────────────────────
+
+export interface SavedJobEntry {
+    savedJobId: string;
+    savedAt: string;
+    job: Job;
+}
+
+// ── JobFilters (mirrors client/src/services/job.service.ts JobFilters) ────
+
+export interface JobFilters {
+    keyword?: string;
+    remote?: boolean;
+    country?: string;
+    location?: string;
+    employmentType?: string;
+    source?: string;
+    newToday?: boolean;
+    activeNow?: boolean;
+    postedWithin?: number;
+    sortBy?: 'newest' | 'oldest' | 'company' | 'relevance';
+    page?: number;
+    limit?: number;
+}
+
+// ── Dashboard stats ────────────────────────────────────────────────────────
+
+export interface DashboardStats {
+    activeJobs: number;
+    newToday: number;
+    remoteJobs: number;
+    savedJobs: number;
+    applications: number;
+    interviews: number;
+}

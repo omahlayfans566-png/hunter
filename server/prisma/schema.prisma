@@ -97,6 +97,38 @@ enum ApplicationMethod {
   UNKNOWN
 }
 
+// Phase 4 enums
+enum ApplicationStatus {
+  SAVED
+  INTERESTED
+  PREPARING
+  APPLIED
+  INTERVIEW
+  ASSESSMENT
+  OFFER
+  REJECTED
+  WITHDRAWN
+  CLOSED
+}
+
+enum InterviewType {
+  PHONE
+  VIDEO
+  ONSITE
+  CODING_ASSESSMENT
+  TECHNICAL
+  PANEL
+  OTHER
+}
+
+// Job freshness / verification
+enum VerificationStatus {
+  ACTIVE
+  EXPIRED
+  CLOSED
+  UNVERIFIED
+}
+
 // ── Models ───────────────────────────────────────────────────────────────
 
 model User {
@@ -108,7 +140,11 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  profile DeveloperProfile?
+  profile            DeveloperProfile?
+  applicationProfile ApplicationProfile?
+  resumes            Resume[]
+  coverLetters       CoverLetter[]
+  applications       JobApplication[]
 
   @@map("users")
 }
@@ -169,6 +205,7 @@ model Job {
   title             String
   companyName       String
   companyUrl        String?
+  companyLogo       String?
   description       String
   location          String?
   country           String?
@@ -190,6 +227,16 @@ model Job {
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
+  // Multi-provider freshness & verification
+  canonicalUrl       String?
+  sources            String[]          @default([])
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  lastSeenAt         DateTime?
+  lastVerifiedAt     DateTime?
+  // Relevance score (0-100) computed at ingestion — used to surface the best
+  // matches for the user's saved developer profile, not just the newest rows.
+  matchScore         Int?              @default(0)
+
   @@unique([source, sourceJobId])
   @@index([status])
   @@index([source])
@@ -197,6 +244,18 @@ model Job {
   @@index([postedAt])
   @@index([companyName])
   @@index([discoveredAt])
+  @@index([canonicalUrl])
+  @@index([verificationStatus])
+  @@index([lastSeenAt])
+  @@index([lastVerifiedAt])
+  @@index([sourceJobId])
+  @@index([country])
+  @@index([location])
+  @@index([title])
+  @@index([matchScore])
+
+  applications JobApplication[]
+
   @@map("jobs")
 }
 
@@ -211,8 +270,122 @@ model SourceHealth {
   jobsFetched   Int      @default(0)
   jobsNew       Int      @default(0)
   jobsDuplicate Int      @default(0)
+  jobsExpired   Int      @default(0)
+  jobsActive    Int      @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@map("source_health")
+}
+
+// ── Phase 4: Application Management ─────────────────────────────────────────
+
+model ApplicationProfile {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  phone                 String?
+  education             String?
+  certifications        String[]
+  workExperience        Json? // [{ role, company, startDate, endDate, summary }]
+  portfolioDescription  String?
+  portfolioProjects     String[]
+  githubUrl             String?
+  githubRepos           String[]
+  linkedinUrl           String?
+  otherLinks            String[]
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("application_profiles")
+}
+
+model Resume {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  fileName  String
+  fileType  String
+  fileSize  Int
+  fileData  Bytes // PDF/text bytes stored in Postgres (BYTEA)
+  isCurrent Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applications JobApplication[]
+
+  @@index([userId])
+  @@map("resumes")
+}
+
+model CoverLetter {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applications JobApplication[]
+
+  @@index([userId])
+  @@map("cover_letters")
+}
+
+model JobApplication {
+  id                 String            @id @default(cuid())
+  userId             String
+  jobId              String?
+  status             ApplicationStatus @default(SAVED)
+
+  // Job snapshot — survives even if the source job is later removed
+  jobTitle           String
+  companyName        String
+  location           String?
+  source             String
+  originalUrl        String
+  applicationUrl     String?
+  applicationMethod  ApplicationMethod @default(UNKNOWN)
+
+  appliedAt          DateTime?
+  cvId               String?
+  coverLetterId      String?
+  message            String?
+  notes              String?
+  interviewDate      DateTime?
+  followUpDate       DateTime?
+  recruiterInfo      String?
+
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job         Job?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  cv          Resume?      @relation(fields: [cvId], references: [id], onDelete: SetNull)
+  coverLetter CoverLetter? @relation(fields: [coverLetterId], references: [id], onDelete: SetNull)
+  interviews  Interview[]
+
+  @@unique([userId, jobId])
+  @@index([userId, status])
+  @@index([userId, appliedAt])
+  @@map("job_applications")
+}
+
+model Interview {
+  id            String        @id @default(cuid())
+  applicationId String
+  type          InterviewType @default(VIDEO)
+  scheduledAt   DateTime
+  location      String?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  application JobApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@map("interviews")
 }

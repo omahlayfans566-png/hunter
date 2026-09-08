@@ -17,7 +17,7 @@ export const env = {
     nodeEnv: process.env.NODE_ENV ?? 'development',
     isDev: (process.env.NODE_ENV ?? 'development') === 'development',
 
-    databaseUrl: requireEnv('DATABASE_URL'),
+    mongodbUri: requireEnv('MONGODB_URI'),
     jwtSecret: requireEnv('JWT_SECRET'),
     jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '7d',
 
