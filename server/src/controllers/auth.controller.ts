@@ -6,8 +6,10 @@ import { UserModel } from '../models';
 
 const COOKIE_OPTIONS = {
     httpOnly: true,
-    secure: !env.isDev,           // HTTPS in production
-    sameSite: 'lax' as const,
+    secure: !env.isDev,                          // HTTPS in production
+    // SameSite=none is required when frontend and backend are on different domains
+    // (e.g. Render static site + Render web service). Must be paired with secure:true.
+    sameSite: env.isDev ? ('lax' as const) : ('none' as const),
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in ms
 };
 
@@ -56,7 +58,7 @@ export const authController = {
             res.clearCookie('token', {
                 httpOnly: true,
                 secure: !env.isDev,
-                sameSite: 'lax',
+                sameSite: env.isDev ? ('lax' as const) : ('none' as const),
             });
 
             res.status(200).json({

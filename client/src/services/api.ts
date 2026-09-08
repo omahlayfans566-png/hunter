@@ -2,11 +2,19 @@ import axios from 'axios';
 
 /**
  * Axios instance configured for the backend API.
- * - withCredentials: true sends the HttpOnly auth cookie automatically.
- * - baseURL: uses the Vite proxy so we never hard-code the backend port.
+ *
+ * LOCAL DEV:  baseURL = '/api'  — Vite proxy forwards to http://localhost:4000
+ * PRODUCTION: baseURL = VITE_API_URL + '/api'  — points directly at the Render backend
+ *
+ * Set VITE_API_URL in Render's environment variables for the Static Site, e.g.:
+ *   VITE_API_URL=https://your-backend.onrender.com
  */
+const baseURL = import.meta.env.VITE_API_URL
+    ? `${import.meta.env.VITE_API_URL}/api`
+    : '/api';
+
 const api = axios.create({
-    baseURL: '/api',
+    baseURL,
     withCredentials: true,
     headers: { 'Content-Type': 'application/json' },
 });
