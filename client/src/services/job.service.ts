@@ -1,7 +1,7 @@
 import api from './api';
 import {
     JobSearchResponse, JobDetail, JobStats,
-    SourceHealth, SourceStatus, IngestionResponse, SavedJobEntry,
+    SourceHealth, SourceStatus, IngestionResponse, SavedJobEntry, Job,
 } from '../types';
 
 export interface JobFilters {
@@ -34,7 +34,6 @@ export async function searchJobs(filters: JobFilters = {}): Promise<JobSearchRes
     if (filters.sortBy) params.set('sortBy', filters.sortBy);
     if (filters.page) params.set('page', String(filters.page));
     if (filters.limit) params.set('limit', String(filters.limit));
-
     const res = await api.get(`/jobs?${params.toString()}`);
     return res.data.data as JobSearchResponse;
 }
@@ -63,6 +62,11 @@ export async function triggerIngestion(source?: string): Promise<IngestionRespon
     const params = source ? `?source=${source}` : '';
     const res = await api.post(`/jobs/ingest${params}`);
     return res.data.data as IngestionResponse;
+}
+
+export async function getTopMatches(limit = 10): Promise<Job[]> {
+    const res = await api.get(`/jobs/top-matches?limit=${limit}`);
+    return res.data.data.jobs as Job[];
 }
 
 // ── Saved Jobs ────────────────────────────────────────────────────────────────

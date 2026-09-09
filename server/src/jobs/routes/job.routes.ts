@@ -22,6 +22,9 @@ router.get('/countries', jobController.getCountries);
 // GET /api/jobs/saved — current user's saved jobs
 router.get('/saved', jobController.getSavedJobs);
 
+// GET /api/jobs/top-matches — personalised top matches for current user
+router.get('/top-matches', jobController.getTopMatches);
+
 // POST /api/jobs/ingest — trigger manual job ingestion
 router.post('/ingest', jobController.triggerIngestion);
 

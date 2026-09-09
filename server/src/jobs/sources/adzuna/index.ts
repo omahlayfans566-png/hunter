@@ -26,6 +26,7 @@ const SOURCE_NAME = 'adzuna';
 const BASE_URL = 'https://api.adzuna.com/v1/api/jobs';
 
 // Adzuna's documented regional API codes.
+// Note: Nigeria ('ng') is NOT supported by Adzuna's API — use AfricanJobs/Jooble for Nigeria.
 const DEFAULT_COUNTRIES = [
     'gb', 'us', 'au', 'at', 'br', 'ca', 'de', 'fr', 'in', 'it',
     'my', 'nl', 'nz', 'pl', 'sg', 'za',
@@ -36,6 +37,21 @@ const COUNTRY_LABELS: Record<string, string> = {
     br: 'Brazil', ca: 'Canada', de: 'Germany', fr: 'France', in: 'India',
     it: 'Italy', my: 'Malaysia', nl: 'Netherlands', nz: 'New Zealand',
     pl: 'Poland', sg: 'Singapore', za: 'South Africa',
+};
+
+// Correct currency per country code
+const COUNTRY_CURRENCY: Record<string, string> = {
+    gb: 'GBP',
+    au: 'AUD',
+    nz: 'NZD',
+    ca: 'CAD',
+    de: 'EUR', fr: 'EUR', at: 'EUR', it: 'EUR', nl: 'EUR', pl: 'PLN',
+    br: 'BRL',
+    in: 'INR',
+    sg: 'SGD',
+    my: 'MYR',
+    za: 'ZAR',
+    us: 'USD',
 };
 
 interface AdzunaLocation {
@@ -164,9 +180,7 @@ export class AdzunaSource implements JobSource {
             salaryMax: raw.salary_is_predicted ? null : (raw.salary_max ? Math.round(raw.salary_max) : null),
             salaryCurrency:
                 raw.salary_min !== undefined
-                    ? COUNTRY_LABELS[countryCode] === 'United Kingdom'
-                        ? 'GBP'
-                        : 'USD'
+                    ? (COUNTRY_CURRENCY[countryCode] ?? 'USD')
                     : null,
             salaryPeriod: raw.salary_min !== undefined ? 'YEARLY' : null,
             salaryRaw: null,

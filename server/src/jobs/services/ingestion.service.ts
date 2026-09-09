@@ -1,5 +1,6 @@
 import { JobModel } from '../../models/Job';
 import { SourceHealthModel } from '../../models/SourceHealth';
+import { DeveloperProfileModel } from '../../models/DeveloperProfile';
 import { JobStatus, VerificationStatus } from '../../models/enums';
 import logger from '../../lib/logger';
 import { getRegisteredSources, getSourceMinIntervalMs } from '../sources/registry';
@@ -13,6 +14,9 @@ let lastManualRunAt: number | null = null;
 
 // A listing not re-confirmed for this long is treated as expired.
 export const STALE_AFTER_DAYS = Number(process.env.JOB_STALE_AFTER_DAYS ?? 14);
+
+// Maximum time (ms) a single provider fetch may take before we abort it.
+const PER_SOURCE_TIMEOUT_MS = 30_000; // 30 seconds
 
 const nowStamp = () => new Date();
 
@@ -58,10 +62,19 @@ async function upsertSourceHealth(
 }
 
 function newResult(source: string): IngestionResult {
-    return { source, fetched: 0, saved: 0, duplicates: 0, errors: 0, expired: 0, skipped: false, success: false };
+    return {
+        source,
+        fetched: 0,
+        saved: 0,
+        duplicates: 0,
+        errors: 0,
+        expired: 0,
+        skipped: false,
+        success: false,
+    };
 }
 
-/** Per-provider rate limiting: skip fetching providers refreshed too recently. */
+/** Per-provider rate limiting: skip providers refreshed too recently. */
 async function shouldFetch(sourceName: string): Promise<boolean> {
     const intervalMs = getSourceMinIntervalMs(sourceName);
     const health = await SourceHealthModel.findOne({ sourceName }).lean();
@@ -70,11 +83,40 @@ async function shouldFetch(sourceName: string): Promise<boolean> {
     return Date.now() - new Date(anchor).getTime() >= intervalMs;
 }
 
+/**
+ * Wrap a provider's fetchJobs() with a hard timeout so one slow provider
+ * can never block the entire ingestion run.
+ */
+async function fetchWithTimeout(
+    source: { sourceName: string; fetchJobs: () => Promise<{ jobs: NormalizedJob[]; error?: string }> },
+    timeoutMs: number,
+): Promise<{ jobs: NormalizedJob[]; error?: string }> {
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+            resolve({ jobs: [], error: `Provider timeout after ${timeoutMs / 1000}s` });
+        }, timeoutMs);
+
+        source
+            .fetchJobs()
+            .then((result) => {
+                clearTimeout(timer);
+                resolve(result);
+            })
+            .catch((err) => {
+                clearTimeout(timer);
+                resolve({
+                    jobs: [],
+                    error: err instanceof Error ? err.message : 'Unknown error',
+                });
+            });
+    });
+}
+
 /** Insert a brand-new canonical job row. */
-async function insertJob(job: NormalizedJob): Promise<void> {
+async function insertJob(job: NormalizedJob, userId?: string): Promise<void> {
     const canonicalUrl = normalizeCanonicalUrl(job.originalUrl);
     const verificationStatus = job.verificationStatus ?? VerificationStatus.UNVERIFIED;
-    const matchScore = await computeMatchScore(job);
+    const matchScore = await computeMatchScore(job, userId);
 
     await JobModel.create({
         source: job.source,
@@ -105,21 +147,26 @@ async function insertJob(job: NormalizedJob): Promise<void> {
         lastSeenAt: nowStamp(),
         lastCheckedAt: nowStamp(),
         verificationStatus,
-        lastVerifiedAt: verificationStatus !== VerificationStatus.UNVERIFIED ? nowStamp() : null,
+        lastVerifiedAt:
+            verificationStatus !== VerificationStatus.UNVERIFIED ? nowStamp() : null,
     });
 }
 
 /**
  * Same listing found again — do NOT create a second row: renew it instead.
  */
-async function renewJob(existingId: string, job: NormalizedJob): Promise<void> {
+async function renewJob(existingId: string, job: NormalizedJob, userId?: string): Promise<void> {
     const existing = await JobModel.findById(existingId, {
-        status: 1, sources: 1, postedAt: 1, canonicalUrl: 1, verificationStatus: 1,
+        status: 1,
+        sources: 1,
+        postedAt: 1,
+        canonicalUrl: 1,
+        verificationStatus: 1,
     }).lean();
     if (!existing) return;
 
     const sources = Array.from(new Set([...(existing.sources ?? []), job.source]));
-    const matchScore = await computeMatchScore(job);
+    const matchScore = await computeMatchScore(job, userId);
 
     const updateData: Record<string, unknown> = {
         lastSeenAt: nowStamp(),
@@ -133,17 +180,19 @@ async function renewJob(existingId: string, job: NormalizedJob): Promise<void> {
         updateData.lastVerifiedAt = nowStamp();
     }
 
-    // Provider explicitly reports the listing is open → revive it if it lapsed.
     if (existing.status !== JobStatus.ACTIVE && job.status === JobStatus.ACTIVE) {
         updateData.status = JobStatus.ACTIVE;
         if (!updateData.verificationStatus) {
-            updateData.verificationStatus = job.verificationStatus ?? VerificationStatus.UNVERIFIED;
+            updateData.verificationStatus =
+                job.verificationStatus ?? VerificationStatus.UNVERIFIED;
         }
         updateData.lastVerifiedAt = nowStamp();
     }
 
-    // Use the freshest posting date we have evidence for.
-    if (job.postedAt && (!existing.postedAt || job.postedAt > existing.postedAt)) {
+    if (
+        job.postedAt &&
+        (!existing.postedAt || job.postedAt > existing.postedAt)
+    ) {
         updateData.postedAt = job.postedAt;
     }
 
@@ -156,7 +205,9 @@ async function renewJob(existingId: string, job: NormalizedJob): Promise<void> {
 
 /** Expire active listings from one source that haven't been re-confirmed in time. */
 async function expireStaleJobs(source: string): Promise<number> {
-    const cutoff = new Date(Date.now() - STALE_AFTER_DAYS * 24 * 60 * 60 * 1000);
+    const cutoff = new Date(
+        Date.now() - STALE_AFTER_DAYS * 24 * 60 * 60 * 1000,
+    );
     const result = await JobModel.updateMany(
         {
             source,
@@ -178,106 +229,184 @@ async function sourceActiveJobCount(source: string): Promise<number> {
     return JobModel.countDocuments({ source, status: JobStatus.ACTIVE });
 }
 
-export async function runIngestion(sourceName?: string, options?: IngestionRunOptions): Promise<IngestionResult[]> {
+/** Process all jobs returned by a single source. */
+async function processSourceJobs(
+    sourceName: string,
+    jobs: NormalizedJob[],
+    result: IngestionResult,
+    userId?: string,
+): Promise<void> {
+    for (const job of jobs) {
+        try {
+            if (!job.title?.trim() || !job.companyName?.trim() || !job.originalUrl) {
+                result.errors++;
+                continue;
+            }
+            if (!isValidUrl(job.originalUrl)) {
+                result.errors++;
+                continue;
+            }
+
+            const duplicate = await findDuplicate(job);
+            if (duplicate.duplicate && duplicate.existingId) {
+                result.duplicates++;
+                await renewJob(duplicate.existingId, job, userId);
+                continue;
+            }
+
+            await insertJob(job, userId);
+            result.saved++;
+        } catch (jobErr) {
+            result.errors++;
+            logger.warn(
+                `[ingestion] Failed to save job from ${sourceName}: ${jobErr instanceof Error ? jobErr.message : 'unknown'
+                }`,
+            );
+        }
+    }
+}
+
+/**
+ * Run ingestion for all registered sources (or a single named source).
+ *
+ * All eligible sources are fetched CONCURRENTLY with a per-source 30s hard
+ * timeout. A single slow/broken source can never block the others.
+ */
+export async function runIngestion(
+    sourceName?: string,
+    options?: IngestionRunOptions,
+): Promise<IngestionResult[]> {
     const opts = options ?? {};
     const force = opts.force === true;
 
-    if (!force && !opts.scheduled && lastManualRunAt && Date.now() - lastManualRunAt < MANUAL_COOLDOWN_MS) {
+    if (
+        !force &&
+        !opts.scheduled &&
+        lastManualRunAt &&
+        Date.now() - lastManualRunAt < MANUAL_COOLDOWN_MS
+    ) {
         const waitMs = MANUAL_COOLDOWN_MS - (Date.now() - lastManualRunAt);
         const wait = Math.ceil(waitMs / 1000);
         throw new Error(`Please wait ${wait}s before running again.`);
     }
     if (!force && !opts.scheduled) lastManualRunAt = Date.now();
 
-    const sources = getRegisteredSources().filter((s) => !sourceName || s.sourceName === sourceName);
-    const results: IngestionResult[] = [];
+    // Get the first available developer profile for relevance scoring at
+    // ingestion time. This is a single-user tool pattern.
+    const profileForScoring = await DeveloperProfileModel.findOne(
+        {},
+        { userId: 1 },
+    ).lean();
+    const ingestUserId = profileForScoring?.userId?.toString();
 
-    for (const source of sources) {
-        const result = newResult(source.sourceName);
+    const allSources = getRegisteredSources().filter(
+        (s) => !sourceName || s.sourceName === sourceName,
+    );
 
-        if (!force && !(await shouldFetch(source.sourceName))) {
-            result.success = true;
-            result.skipped = true;
-            result.errorMessage = 'Skipped — fetched too recently for provider rate limits.';
-            results.push(result);
-            continue;
-        }
+    // Determine which sources should actually fetch
+    const fetchDecisions = await Promise.all(
+        allSources.map(async (s) => ({
+            source: s,
+            should: force ? true : await shouldFetch(s.sourceName),
+        })),
+    );
 
-        await upsertSourceHealth(source.sourceName, { status: 'RUNNING', lastRunAt: nowStamp() });
+    // Mark skipped sources immediately
+    const results: IngestionResult[] = fetchDecisions
+        .filter((d) => !d.should)
+        .map((d) => {
+            const r = newResult(d.source.sourceName);
+            r.success = true;
+            r.skipped = true;
+            r.errorMessage = 'Skipped — fetched too recently for provider rate limits.';
+            return r;
+        });
 
-        try {
-            const { jobs, error } = await source.fetchJobs();
-            result.fetched = jobs.length;
+    const toFetch = fetchDecisions.filter((d) => d.should);
 
-            if (error && jobs.length === 0) {
-                result.errorMessage = error;
-                result.errors = 1;
-                await upsertSourceHealth(source.sourceName, {
+    // Mark all about-to-run sources as RUNNING concurrently
+    await Promise.allSettled(
+        toFetch.map((d) =>
+            upsertSourceHealth(d.source.sourceName, {
+                status: 'RUNNING',
+                lastRunAt: nowStamp(),
+            }),
+        ),
+    );
+
+    // ── Concurrent fetch across all eligible sources ───────────────────────
+    const fetchResults = await Promise.allSettled(
+        toFetch.map(async (d) => {
+            const result = newResult(d.source.sourceName);
+            try {
+                const { jobs, error } = await fetchWithTimeout(
+                    d.source,
+                    PER_SOURCE_TIMEOUT_MS,
+                );
+                result.fetched = jobs.length;
+
+                if (error && jobs.length === 0) {
+                    result.errorMessage = error;
+                    result.errors = 1;
+                    await upsertSourceHealth(d.source.sourceName, {
+                        status: 'ERROR',
+                        lastErrorAt: nowStamp(),
+                        lastErrorMsg: error,
+                    });
+                    return result;
+                }
+
+                // Process jobs for this source sequentially (DB writes need order)
+                await processSourceJobs(
+                    d.source.sourceName,
+                    jobs,
+                    result,
+                    ingestUserId,
+                );
+
+                // Stale sweep only after a successful fetch
+                if (jobs.length > 0) {
+                    result.expired = await expireStaleJobs(d.source.sourceName);
+                }
+
+                result.success = true;
+                const activeCount = await sourceActiveJobCount(d.source.sourceName);
+                await upsertSourceHealth(d.source.sourceName, {
+                    status: 'SUCCESS',
+                    lastSuccessAt: nowStamp(),
+                    jobsFetched: result.fetched,
+                    jobsNew: result.saved,
+                    jobsDuplicate: result.duplicates,
+                    jobsExpired: result.expired,
+                    jobsActive: activeCount,
+                });
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : 'Unknown error';
+                result.errorMessage = msg;
+                result.errors = result.errors || 1;
+                logger.error(
+                    `[ingestion] Source ${d.source.sourceName} failed: ${msg}`,
+                );
+                await upsertSourceHealth(d.source.sourceName, {
                     status: 'ERROR',
                     lastErrorAt: nowStamp(),
-                    lastErrorMsg: error,
+                    lastErrorMsg: msg,
                 });
-                results.push(result);
-                continue;
             }
+            return result;
+        }),
+    );
 
-            for (const job of jobs) {
-                try {
-                    if (!job.title?.trim() || !job.companyName?.trim() || !job.originalUrl) {
-                        result.errors++;
-                        continue;
-                    }
-                    if (!isValidUrl(job.originalUrl)) {
-                        result.errors++;
-                        continue;
-                    }
-
-                    const duplicate = await findDuplicate(job);
-                    if (duplicate.duplicate && duplicate.existingId) {
-                        result.duplicates++;
-                        await renewJob(duplicate.existingId, job);
-                        continue;
-                    }
-
-                    await insertJob(job);
-                    result.saved++;
-                } catch (jobErr) {
-                    result.errors++;
-                    logger.warn(
-                        `[ingestion] Failed to save job from ${source.sourceName}: ${jobErr instanceof Error ? jobErr.message : 'unknown'}`,
-                    );
-                }
-            }
-
-            // Stale sweep only after a successful fetch (never after a provider outage).
-            if (jobs.length > 0) {
-                result.expired = await expireStaleJobs(source.sourceName);
-            }
-
-            result.success = true;
-            const activeCount = await sourceActiveJobCount(source.sourceName);
-            await upsertSourceHealth(source.sourceName, {
-                status: 'SUCCESS',
-                lastSuccessAt: nowStamp(),
-                jobsFetched: result.fetched,
-                jobsNew: result.saved,
-                jobsDuplicate: result.duplicates,
-                jobsExpired: result.expired,
-                jobsActive: activeCount,
-            });
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : 'Unknown error';
-            result.errorMessage = msg;
-            result.errors = result.errors || 1;
-            logger.error(`[ingestion] Source ${source.sourceName} failed: ${msg}`);
-            await upsertSourceHealth(source.sourceName, {
-                status: 'ERROR',
-                lastErrorAt: nowStamp(),
-                lastErrorMsg: msg,
-            });
+    // Collect results from allSettled (they can't reject due to inner try/catch)
+    for (const settled of fetchResults) {
+        if (settled.status === 'fulfilled') {
+            results.push(settled.value);
+        } else {
+            // Shouldn't happen, but be defensive
+            const r = newResult('unknown');
+            r.errorMessage = settled.reason?.message ?? 'Unknown error';
+            results.push(r);
         }
-
-        results.push(result);
     }
 
     return results;

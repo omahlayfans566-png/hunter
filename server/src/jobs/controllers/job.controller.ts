@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import { jobService } from '../services/job.service';
 import { runIngestion } from '../services/ingestion.service';
 import { getRegisteredSources } from '../sources/registry';
@@ -6,7 +6,7 @@ import { AuthRequest } from '../../types';
 import { JobStatus } from '../../models/enums';
 
 export const jobController = {
-    async getJobs(req: Request, res: Response, next: NextFunction) {
+    async getJobs(req: AuthRequest, res: Response, next: NextFunction) {
         try {
             const {
                 keyword, remote, country, location, employmentType,
@@ -27,13 +27,14 @@ export const jobController = {
                 page: page ? parseInt(page as string) : undefined,
                 limit: limit ? parseInt(limit as string) : undefined,
                 sortBy: (sortBy as 'newest' | 'oldest' | 'company' | 'relevance') || 'relevance',
+                userId: req.user?.userId,
             });
 
             res.status(200).json({ success: true, data: result });
         } catch (err) { next(err); }
     },
 
-    async getJobById(req: Request, res: Response, next: NextFunction) {
+    async getJobById(req: AuthRequest, res: Response, next: NextFunction) {
         try {
             const job = await jobService.getJobById(String(req.params.id));
             if (!job) {
@@ -44,27 +45,36 @@ export const jobController = {
         } catch (err) { next(err); }
     },
 
-    async getStats(_req: Request, res: Response, next: NextFunction) {
+    async getStats(_req: AuthRequest, res: Response, next: NextFunction) {
         try {
             const stats = await jobService.getStats();
             res.status(200).json({ success: true, data: { stats } });
         } catch (err) { next(err); }
     },
 
-    async getCountries(_req: Request, res: Response, next: NextFunction) {
+    async getCountries(_req: AuthRequest, res: Response, next: NextFunction) {
         try {
             const countries = await jobService.getDistinctCountries();
             res.status(200).json({ success: true, data: { countries } });
         } catch (err) { next(err); }
     },
 
-    async getSourceHealth(_req: Request, res: Response, next: NextFunction) {
+    async getSourceHealth(_req: AuthRequest, res: Response, next: NextFunction) {
         try {
             const [dbHealth, sourceStatuses] = await Promise.all([
                 jobService.getSourceHealth(),
                 Promise.resolve(getRegisteredSources().map((s) => s.getStatus())),
             ]);
             res.status(200).json({ success: true, data: { health: dbHealth, sources: sourceStatuses } });
+        } catch (err) { next(err); }
+    },
+
+    async getTopMatches(req: AuthRequest, res: Response, next: NextFunction) {
+        try {
+            const userId = req.user!.userId;
+            const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
+            const topMatches = await jobService.getTopMatches(userId, Math.min(20, Math.max(1, limit)));
+            res.status(200).json({ success: true, data: { jobs: topMatches } });
         } catch (err) { next(err); }
     },
 
@@ -75,9 +85,10 @@ export const jobController = {
             const totalNew = results.reduce((s, r) => s + r.saved, 0);
             const totalDupes = results.reduce((s, r) => s + r.duplicates, 0);
             const totalFetched = results.reduce((s, r) => s + r.fetched, 0);
+            const sources = results.filter((r) => !r.skipped);
             res.status(200).json({
                 success: true,
-                message: `Ingestion complete. ${totalNew} new jobs found.`,
+                message: `Ingestion complete. ${totalNew} new jobs found from ${sources.length} sources.`,
                 data: { results, summary: { totalFetched, totalNew, totalDupes } },
             });
         } catch (err: unknown) {

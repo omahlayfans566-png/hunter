@@ -25,7 +25,12 @@ import logger from '../../../lib/logger';
 
 const SOURCE_NAME = 'lever';
 const API_BASE = 'https://api.lever.co/v0/postings';
-const DEFAULT_COMPANIES = ['toptal'];
+const DEFAULT_COMPANIES = [
+    // Verified working via live test (September 2026)
+    // Only companies actively using Lever's public job board API
+    'toptal',
+    // Override with LEVER_COMPANIES env var to add more verified slugs
+];
 
 interface LeverCategories {
     commitment?: string;

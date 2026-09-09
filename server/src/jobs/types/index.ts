@@ -85,6 +85,8 @@ export interface JobSearchParams {
     activeNow?: boolean;
     /** POSTED WITHIN — jobs posted within N days (1=24h, 3, 7, 14, 30). */
     postedWithin?: number;
+    /** User ID for personalised match scoring in search results. */
+    userId?: string;
     page?: number;
     limit?: number;
     sortBy?: 'newest' | 'oldest' | 'company' | 'relevance';

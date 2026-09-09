@@ -3,6 +3,7 @@ import { JobModel } from '../../models/Job';
 import { SourceHealthModel } from '../../models/SourceHealth';
 import { JobStatus, RemoteType } from '../../models/enums';
 import { JobSearchParams } from '../types';
+import { computeMatchScore } from './relevance.service';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -201,6 +202,56 @@ export const jobService = {
             country: { $ne: null, $exists: true },
         });
         return (countries as (string | null)[]).filter((c): c is string => Boolean(c)).sort();
+    },
+
+    /**
+     * Top matches for a specific user — recalculates match scores live so
+     * the results always reflect the user's current profile, then returns the
+     * top N active jobs sorted by personal match score.
+     */
+    async getTopMatches(userId: string, limit = 10): Promise<unknown[]> {
+        // Fetch a generous candidate set sorted by stored matchScore
+        const candidates = await JobModel.find(
+            { status: JobStatus.ACTIVE },
+            '-__v',
+        )
+            .sort({ matchScore: -1, postedAt: -1 })
+            .limit(limit * 5) // over-fetch so we can re-score and reorder
+            .lean();
+
+        // Re-score each candidate against the requesting user's live profile
+        const scored = await Promise.all(
+            candidates.map(async (job) => {
+                const liveScore = await computeMatchScore(
+                    {
+                        title: job.title,
+                        tags: job.tags,
+                        description: job.description,
+                        country: job.country,
+                        location: job.location,
+                        remoteType: job.remoteType,
+                        employmentType: job.employmentType,
+                    },
+                    userId,
+                );
+                return {
+                    ...job,
+                    id: job._id.toString(),
+                    _id: undefined,
+                    matchScore: liveScore,
+                };
+            }),
+        );
+
+        // Sort by live score desc, then freshness
+        scored.sort((a, b) => {
+            if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+            const aDate = a.postedAt ? new Date(a.postedAt).getTime() : 0;
+            const bDate = b.postedAt ? new Date(b.postedAt).getTime() : 0;
+            return bDate - aDate;
+        });
+
+        return scored.slice(0, limit);
     },
 
     /** Save a job for a user. Idempotent — saving twice is not an error. */

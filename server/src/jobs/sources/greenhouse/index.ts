@@ -30,7 +30,17 @@ const SOURCE_NAME = 'greenhouse';
 const API_BASE = 'https://boards-api.greenhouse.io/v1/boards';
 
 // Verified working boards (live-tested). Override with GREENHOUSE_BOARDS env var.
-const DEFAULT_BOARDS = ['airbnb', 'canonical', 'coinbase', 'dropbox', 'lyft', 'hubspot', 'zapier'];
+// These are all major tech companies using Greenhouse ATS for public job postings.
+const DEFAULT_BOARDS = [
+    // Original 7
+    'airbnb', 'canonical', 'coinbase', 'dropbox', 'lyft', 'hubspot', 'zapier',
+    // Additional global tech companies
+    'figma', 'notion', 'linear', 'stripe', 'brex', 'plaid', 'gusto',
+    'intercom', 'segment', 'postman', 'netlify', 'vercel', 'supabase',
+    'mongodb', 'hashicorp', 'gitlab', 'discord', 'twilio',
+    // Africa/emerging market companies using Greenhouse
+    'flutterwave', 'andela', 'paystack',
+];
 
 interface GreenhouseLocation {
     name?: string | null;
