@@ -6,8 +6,13 @@ import axios from 'axios';
  * LOCAL DEV:  baseURL = '/api'  — Vite proxy forwards to http://localhost:4000
  * PRODUCTION: baseURL = VITE_API_URL + '/api'  — points directly at the Render backend
  *
- * Set VITE_API_URL in Render's environment variables for the Static Site, e.g.:
- *   VITE_API_URL=https://your-backend.onrender.com
+ * Authentication uses TWO parallel mechanisms so it works in all environments:
+ *  1. HttpOnly cookie (set by backend on login) — works in same-origin & some cross-origin
+ *  2. Authorization: Bearer header from sessionStorage — works in ALL cross-origin environments
+ *
+ * The backend `authenticate` middleware accepts either one.
+ * sessionStorage is cleared automatically when the browser tab closes — it is
+ * NOT accessible to other tabs or origins, making it safe for JWT storage.
  */
 const baseURL = import.meta.env.VITE_API_URL
     ? `${import.meta.env.VITE_API_URL}/api`
@@ -15,17 +20,42 @@ const baseURL = import.meta.env.VITE_API_URL
 
 const api = axios.create({
     baseURL,
-    withCredentials: true,
+    withCredentials: true,          // send HttpOnly cookie when available
     headers: { 'Content-Type': 'application/json' },
 });
 
-// Response interceptor — extract a user-friendly error message
+// ── Session-scoped token store ────────────────────────────────────────────────
+const TOKEN_KEY = 'jh_token';
+
+export function setAuthToken(token: string | null): void {
+    if (token) {
+        sessionStorage.setItem(TOKEN_KEY, token);
+    } else {
+        sessionStorage.removeItem(TOKEN_KEY);
+    }
+}
+
+export function getAuthToken(): string | null {
+    return sessionStorage.getItem(TOKEN_KEY);
+}
+
+// ── Request interceptor — attach token as Authorization header ────────────────
+api.interceptors.request.use((config) => {
+    const token = getAuthToken();
+    if (token) {
+        config.headers = config.headers ?? {};
+        config.headers['Authorization'] = `Bearer ${token}`;
+    }
+    return config;
+});
+
+// ── Response interceptor — extract user-friendly error message ────────────────
 api.interceptors.response.use(
     (response) => response,
     (error) => {
         const message =
             error.response?.data?.message ??
-            'We couldn\'t complete that request. Please check your connection and try again.';
+            "We couldn't complete that request. Please check your connection and try again.";
         return Promise.reject(new Error(message));
     },
 );

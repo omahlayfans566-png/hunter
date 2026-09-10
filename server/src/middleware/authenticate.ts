@@ -4,8 +4,13 @@ import { AppError } from '../utils/AppError';
 import { AuthRequest } from '../types';
 
 /**
- * Middleware that verifies the JWT from the HttpOnly cookie.
- * Attaches `req.user` on success; throws 401 on failure.
+ * Middleware that verifies the JWT from either:
+ *  1. The HttpOnly cookie named "token"  (dev + same-origin prod)
+ *  2. The Authorization: Bearer <token> header  (cross-origin prod)
+ *
+ * The header takes precedence when both are present. This makes the
+ * middleware work reliably in all production environments regardless of
+ * whether the browser passes cross-origin SameSite=None cookies.
  */
 export function authenticate(
     req: AuthRequest,
@@ -13,7 +18,18 @@ export function authenticate(
     next: NextFunction,
 ): void {
     try {
-        const token: string | undefined = req.cookies?.token;
+        // 1. Try Authorization: Bearer <token> header first
+        let token: string | undefined;
+
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            token = authHeader.slice(7).trim();
+        }
+
+        // 2. Fall back to HttpOnly cookie
+        if (!token) {
+            token = req.cookies?.token;
+        }
 
         if (!token) {
             throw new AppError('Authentication required. Please log in.', 401);

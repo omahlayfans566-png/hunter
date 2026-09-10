@@ -29,7 +29,7 @@ export const authController = {
             res.status(201).json({
                 success: true,
                 message: 'Account created successfully.',
-                data: { user },
+                data: { user, token },
             });
         } catch (err) {
             next(err);
@@ -46,7 +46,7 @@ export const authController = {
             res.status(200).json({
                 success: true,
                 message: 'Logged in successfully.',
-                data: { user },
+                data: { user, token },
             });
         } catch (err) {
             next(err);
